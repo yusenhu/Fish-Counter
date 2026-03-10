@@ -1,0 +1,409 @@
+import argparse
+import os
+from collections import defaultdict, deque
+from pathlib import Path
+from typing import Dict, Tuple
+
+import numpy as np
+
+if int(np.__version__.split(".")[0]) >= 2:
+    raise RuntimeError(
+        "Detected NumPy >= 2, but this environment has native modules built against NumPy 1.x. "
+        "Please install a compatible version: `python -m pip install 'numpy<2' --upgrade --force-reinstall`."
+    )
+
+import cv2
+from ultralytics import YOLO
+
+# ==============================
+# ===== DEFAULT PARAMETERS =====
+# ==============================
+
+VIDEO_PATH = "test_fish_video.mp4"
+CONF_THRESHOLD = 0.4
+CAMERA_INDEX = 0
+FRAME_INTERVAL_SECONDS = 0.5
+
+# ------------------------------
+# Label mode state
+# ------------------------------
+drawing = False
+ix, iy = -1, -1
+current_boxes = []
+frame_copy = None
+
+
+def draw_rectangle(event, x, y, flags, param):
+    """Mouse callback for drawing annotation boxes in label mode."""
+    global ix, iy, drawing, current_boxes, frame_copy
+
+    if event == cv2.EVENT_LBUTTONDOWN:
+        drawing = True
+        ix, iy = x, y
+
+    elif event == cv2.EVENT_MOUSEMOVE and drawing:
+        temp = frame_copy.copy()
+        cv2.rectangle(temp, (ix, iy), (x, y), (0, 255, 0), 2)
+        cv2.imshow("Label Mode", temp)
+
+    elif event == cv2.EVENT_LBUTTONUP:
+        drawing = False
+        x1, y1 = min(ix, x), min(iy, y)
+        x2, y2 = max(ix, x), max(iy, y)
+        current_boxes.append((x1, y1, x2, y2))
+        cv2.rectangle(frame_copy, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        cv2.imshow("Label Mode", frame_copy)
+
+
+def label_mode(video_path: str, frame_interval_seconds: float):
+    """Step through video and save labeled frames in YOLO format."""
+    global frame_copy, current_boxes
+
+    os.makedirs("dataset/images", exist_ok=True)
+    os.makedirs("dataset/labels", exist_ok=True)
+
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise RuntimeError(f"Unable to open video: {video_path}")
+
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30
+    frame_skip = max(1, int(fps * frame_interval_seconds))
+
+    existing_images = [p for p in os.listdir("dataset/images") if p.lower().endswith(".jpg")]
+    frame_index = len(existing_images)
+
+    print("[INFO] Label Mode Started")
+    print("Mouse drag to draw box")
+    print("Press 's' to save frame + labels")
+    print("Press 'n' for next frame")
+    print("Press 'r' to reset boxes")
+    print("Press 'q' to quit")
+
+    frame_count = 0
+
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        if frame_count % frame_skip != 0:
+            frame_count += 1
+            continue
+
+        frame_count += 1
+        frame_copy = frame.copy()
+        current_boxes = []
+
+        cv2.namedWindow("Label Mode")
+        cv2.setMouseCallback("Label Mode", draw_rectangle)
+
+        while True:
+            cv2.imshow("Label Mode", frame_copy)
+            key = cv2.waitKey(1) & 0xFF
+
+            if key == ord("s"):
+                img_name = f"frame_{frame_index}.jpg"
+                img_path = os.path.join("dataset/images", img_name)
+                cv2.imwrite(img_path, frame)
+
+                label_name = f"frame_{frame_index}.txt"
+                label_path = os.path.join("dataset/labels", label_name)
+                h, w, _ = frame.shape
+
+                with open(label_path, "w", encoding="utf-8") as f:
+                    for box in current_boxes:
+                        x1, y1, x2, y2 = box
+                        cx = ((x1 + x2) / 2) / w
+                        cy = ((y1 + y2) / 2) / h
+                        bw = (x2 - x1) / w
+                        bh = (y2 - y1) / h
+                        f.write(f"0 {cx} {cy} {bw} {bh}\n")
+
+                print(f"[INFO] Saved frame {frame_index}")
+                frame_index += 1
+                break
+
+            if key == ord("n"):
+                print("[INFO] Skipped frame")
+                break
+
+            if key == ord("r"):
+                frame_copy = frame.copy()
+                current_boxes = []
+                print("[INFO] Reset boxes")
+
+            if key == ord("q"):
+                cap.release()
+                cv2.destroyAllWindows()
+                return
+
+    cap.release()
+    cv2.destroyAllWindows()
+
+
+def find_latest_best_model(default_path: str = "runs/detect/train/weights/best.pt") -> str:
+    """Return newest available best.pt across train folders; fallback to default path."""
+    runs_dir = Path("runs/detect")
+    if not runs_dir.exists():
+        return default_path
+
+    candidates = []
+    for train_dir in runs_dir.glob("train*"):
+        best = train_dir / "weights" / "best.pt"
+        if best.exists():
+            candidates.append(best)
+
+    if not candidates:
+        return default_path
+
+    latest = max(candidates, key=lambda p: p.stat().st_mtime)
+    return str(latest)
+
+
+def resolve_model_path(model_arg: str) -> str:
+    """Resolve model path from CLI arg (`auto` supported)."""
+    if model_arg == "auto":
+        path = find_latest_best_model()
+        print(f"[INFO] Auto-selected model: {path}")
+        return path
+
+    if not Path(model_arg).exists():
+        raise FileNotFoundError(f"Model not found: {model_arg}")
+
+    return model_arg
+
+
+def train_mode(resume: bool, epochs: int, imgsz: int, batch: int):
+    """Train model from base checkpoint or resume from latest best model."""
+    if resume:
+        resume_model = find_latest_best_model()
+        print(f"[INFO] Continuing training from: {resume_model}")
+        model = YOLO(resume_model)
+    else:
+        print("[INFO] Starting NEW training from YOLO base model (yolov8n.pt)...")
+        model = YOLO("yolov8n.pt")
+
+    model.train(
+        data="dataset.yaml",
+        epochs=epochs,
+        imgsz=imgsz,
+        batch=batch,
+        project="runs/detect",
+    )
+
+
+class DirectionalCounter:
+    """
+    Count fish once when crossing a center line.
+    Axis can be fixed or auto-selected based on track motion.
+    """
+
+    def __init__(self, axis_mode: str = "auto", min_track_points: int = 4):
+        self.axis_mode = axis_mode  # auto | horizontal | vertical
+        self.min_track_points = min_track_points
+        self.track_history: Dict[int, deque] = defaultdict(lambda: deque(maxlen=30))
+        self.counted_ids = set()
+        self.total_count = 0
+        self.left_to_right = 0
+        self.right_to_left = 0
+        self.top_to_bottom = 0
+        self.bottom_to_top = 0
+
+    def _choose_axis(self) -> str:
+        if self.axis_mode in {"horizontal", "vertical"}:
+            return self.axis_mode
+
+        total_dx, total_dy = 0.0, 0.0
+        used_tracks = 0
+
+        for history in self.track_history.values():
+            if len(history) < self.min_track_points:
+                continue
+            start_x, start_y = history[0]
+            end_x, end_y = history[-1]
+            total_dx += abs(end_x - start_x)
+            total_dy += abs(end_y - start_y)
+            used_tracks += 1
+
+        if used_tracks == 0:
+            return "horizontal"
+
+        return "horizontal" if total_dx >= total_dy else "vertical"
+
+    def update(self, track_id: int, center: Tuple[float, float], frame_shape: Tuple[int, int, int]):
+        self.track_history[track_id].append(center)
+
+        history = self.track_history[track_id]
+        if len(history) < self.min_track_points:
+            return
+
+        if track_id in self.counted_ids:
+            return
+
+        axis = self._choose_axis()
+        h, w = frame_shape[:2]
+
+        start_x, start_y = history[0]
+        end_x, end_y = history[-1]
+
+        if axis == "horizontal":
+            line_x = w / 2.0
+            start_side = "left" if start_x < line_x else "right"
+            end_side = "left" if end_x < line_x else "right"
+
+            if start_side != end_side:
+                self.counted_ids.add(track_id)
+                self.total_count += 1
+                if start_side == "left" and end_side == "right":
+                    self.left_to_right += 1
+                elif start_side == "right" and end_side == "left":
+                    self.right_to_left += 1
+
+        else:  # vertical axis
+            line_y = h / 2.0
+            start_side = "top" if start_y < line_y else "bottom"
+            end_side = "top" if end_y < line_y else "bottom"
+
+            if start_side != end_side:
+                self.counted_ids.add(track_id)
+                self.total_count += 1
+                if start_side == "top" and end_side == "bottom":
+                    self.top_to_bottom += 1
+                elif start_side == "bottom" and end_side == "top":
+                    self.bottom_to_top += 1
+
+    def draw_overlay(self, frame):
+        axis = self._choose_axis()
+        h, w = frame.shape[:2]
+
+        if axis == "horizontal":
+            line_x = int(w / 2)
+            cv2.line(frame, (line_x, 0), (line_x, h), (255, 255, 0), 2)
+            cv2.putText(
+                frame,
+                f"Axis: horizontal | L->R: {self.left_to_right}  R->L: {self.right_to_left}",
+                (20, 80),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.65,
+                (255, 255, 0),
+                2,
+            )
+        else:
+            line_y = int(h / 2)
+            cv2.line(frame, (0, line_y), (w, line_y), (255, 255, 0), 2)
+            cv2.putText(
+                frame,
+                f"Axis: vertical | T->B: {self.top_to_bottom}  B->T: {self.bottom_to_top}",
+                (20, 80),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.65,
+                (255, 255, 0),
+                2,
+            )
+
+        cv2.putText(
+            frame,
+            f"Total Fish Count: {self.total_count}",
+            (20, 40),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1,
+            (0, 0, 255),
+            3,
+        )
+
+
+def run_detection_stream(capture: cv2.VideoCapture, model_path: str, conf: float, axis_mode: str, window_name: str):
+    model = YOLO(model_path)
+    counter = DirectionalCounter(axis_mode=axis_mode)
+
+    while True:
+        ret, frame = capture.read()
+        if not ret:
+            break
+
+        results = model.track(frame, persist=True, conf=conf, tracker="bytetrack.yaml")
+
+        if results and results[0].boxes.id is not None:
+            boxes = results[0].boxes.xyxy.cpu().tolist()
+            ids = [int(v) for v in results[0].boxes.id.cpu().tolist()]
+
+            for box, track_id in zip(boxes, ids):
+                x1, y1, x2, y2 = map(int, box)
+                cx = (x1 + x2) / 2.0
+                cy = (y1 + y2) / 2.0
+
+                counter.update(track_id, (cx, cy), frame.shape)
+
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                cv2.putText(
+                    frame,
+                    f"ID {track_id}",
+                    (x1, max(15, y1 - 5)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    (0, 255, 0),
+                    2,
+                )
+
+        counter.draw_overlay(frame)
+        cv2.imshow(window_name, frame)
+
+        if cv2.waitKey(1) & 0xFF == ord("q"):
+            break
+
+    capture.release()
+    cv2.destroyAllWindows()
+
+
+def detect_and_count_video(video_path: str, model_path: str, conf: float, axis_mode: str):
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise RuntimeError(f"Unable to open video: {video_path}")
+    run_detection_stream(cap, model_path, conf, axis_mode, "Video Fish Detection")
+
+
+def live_camera_mode(camera_index: int, model_path: str, conf: float, axis_mode: str):
+    cap = cv2.VideoCapture(camera_index)
+    if not cap.isOpened():
+        raise RuntimeError(f"Unable to open camera index: {camera_index}")
+    run_detection_stream(cap, model_path, conf, axis_mode, "Live Fish Detection")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Fish detection, tracking, and directional counting")
+    parser.add_argument("--mode", choices=["train", "test", "live", "label"], required=True)
+
+    # shared runtime args
+    parser.add_argument("--model", default="auto", help='Model path or "auto" for newest runs/detect/train*/weights/best.pt')
+    parser.add_argument("--video", default=VIDEO_PATH, help="Video path for test/label modes")
+    parser.add_argument("--camera", type=int, default=CAMERA_INDEX, help="Camera index for live mode")
+    parser.add_argument("--conf", type=float, default=CONF_THRESHOLD, help="Detection confidence threshold")
+    parser.add_argument(
+        "--axis",
+        choices=["auto", "horizontal", "vertical"],
+        default="auto",
+        help="Counting axis: horizontal(left<->right), vertical(top<->bottom), or auto",
+    )
+
+    # train args
+    parser.add_argument("--resume", action="store_true", help="Resume training from latest best.pt")
+    parser.add_argument("--epochs", type=int, default=50)
+    parser.add_argument("--imgsz", type=int, default=640)
+    parser.add_argument("--batch", type=int, default=8)
+
+    # label args
+    parser.add_argument("--frame-interval", type=float, default=FRAME_INTERVAL_SECONDS)
+
+    args = parser.parse_args()
+
+
+    if args.mode == "train":
+        train_mode(resume=args.resume, epochs=args.epochs, imgsz=args.imgsz, batch=args.batch)
+    elif args.mode == "test":
+        model_path = resolve_model_path(args.model)
+        detect_and_count_video(args.video, model_path, args.conf, args.axis)
+    elif args.mode == "live":
+        model_path = resolve_model_path(args.model)
+        live_camera_mode(args.camera, model_path, args.conf, args.axis)
+    elif args.mode == "label":
+        label_mode(args.video, args.frame_interval)
