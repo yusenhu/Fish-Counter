@@ -1,59 +1,53 @@
-# Model Selection and Fish Counting Recommendations
+# Model Notes (Development & Debug History)
 
-## Does test/live use the latest trained model automatically?
+This file keeps technical rationale, change history, and deeper implementation notes.
+User-facing quick usage belongs in `README.md`.
 
-In the current script, test mode and live mode both load a fixed path:
+## Evolution Summary
 
-```python
-MODEL_PATH = "runs/detect/train/weights/best.pt"
-```
+### 1) Initial issue: stale model path
+Early versions commonly used a fixed model path (`runs/detect/train/weights/best.pt`), which can become stale after multiple training runs (`train2`, `train3`, ...).
 
-That means they **do not automatically pick the newest training run** if Ultralytics creates `train2`, `train3`, etc. They only use whatever file exists at `runs/detect/train/weights/best.pt`.
+### 2) Model auto-selection added
+The code now supports selecting newest checkpoint automatically in test/live via `--model auto`, scanning `runs/detect/train*/weights/best.pt` by modification time.
 
-### What happens when you train repeatedly
+### 3) Directional counting logic added
+Counting moved from naive per-detection counting to ID-based line crossing with tracker IDs, with axis modes `auto|horizontal|vertical`.
 
-- `model.train(...)` without a fixed `name` typically creates incremented run folders (`train`, `train2`, `train3`, ...).
-- New `best.pt` files are saved in each run's `weights/` subfolder.
-- Your test/live code still points to `runs/detect/train/weights/best.pt`, so it can stay on an older model.
+### 4) Label index collision bug fixed
+A real bug existed in label mode when index was computed as `len(existing_images)`. If numbering became non-contiguous, files could be overwritten.
 
-## Better approach
+Fix implemented:
+- Parse numeric suffix from existing `frame_<n>` files in both image and label folders
+- Choose next index as `max(n) + 1`
 
-Use one of these options:
+### 5) Cross-platform training device handling
+Training now supports `--device` and resolves safer defaults:
+- CUDA GPU when available
+- Apple MPS on Apple Silicon
+- CPU fallback
 
-1. **Explicit model argument** (`--model runs/detect/train7/weights/best.pt`) for test/live.
-2. **Auto-select latest run** by scanning `runs/detect` and picking the most recently modified `weights/best.pt`.
-3. **Pin a stable path** after training by copying/symlinking newest `best.pt` to a fixed location like `models/latest.pt`.
+Intel Mac explicitly rejects `--device mps` with a clear error.
 
-## Counting improvements (avoid repeated counting)
+### 6) NumPy ABI constraint
+Because some dependencies may be built against NumPy 1.x, environment is pinned to `numpy<2` to avoid ABI crashes in mixed binary setups.
 
-Current code uses global `counted_ids` and increments once per tracker ID, which is a good start. To improve robustness:
+## Technical Implementation Notes
 
-- Define a **counting line/zone** and only increment when a track crosses in one direction.
-- Require a track to be **stable for N frames** before eligible for counting.
-- Set tracker parameters (`track_buffer`, matching thresholds) to reduce ID switches.
-- Add **TTL cleanup** for very old IDs in long live sessions.
-- Optionally maintain **entry/exit counters** if fish can move both directions.
+### Model switching semantics
+- Train without `--resume`: starts from `yolov8n.pt`
+- Train with `--resume`: loads latest trained checkpoint
+- Test/live with `--model auto`: loads latest checkpoint
 
-## Data/training workflow suggestions
+### Dataset maintenance notes
+After new labels are added:
+- Ensure `dataset.yaml` paths still match folder structure
+- Ensure class mapping (`names`) stays correct
+- Re-run training and test with latest model
 
-- Split data into train/val/test and keep test set fixed for fair comparisons.
-- Version datasets (`dataset_v1`, `dataset_v2`) and log which version trained each model.
-- Save metadata (date, metrics, dataset version, commit hash) with each run.
-- Compare new model vs previous best before promoting to `latest.pt`.
-
-## Practical implementation idea
-
-A small helper can select latest weights for test/live:
-
-```python
-from pathlib import Path
-
-
-def get_latest_best(default="runs/detect/train/weights/best.pt"):
-    candidates = list(Path("runs/detect").glob("train*/weights/best.pt"))
-    if not candidates:
-        return default
-    return str(max(candidates, key=lambda p: p.stat().st_mtime))
-```
-
-Then set `MODEL_PATH = get_latest_best()` or expose it with argparse.
+### Suggested future improvements
+- Add explicit run metadata logging (dataset version, commit hash, metrics)
+- Add evaluation script to compare newly trained model vs previous best
+- Add line/zone configuration from CLI instead of fixed center line
+- Add tracker config exposure (`bytetrack` thresholds/buffer) through CLI
+- Add CI checks and lightweight unit tests for path/model-index helpers
