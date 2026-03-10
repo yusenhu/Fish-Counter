@@ -1,7 +1,5 @@
 import argparse
 import os
-import platform
-import re
 from collections import defaultdict, deque
 from pathlib import Path
 from typing import Dict, Tuple
@@ -33,22 +31,6 @@ drawing = False
 ix, iy = -1, -1
 current_boxes = []
 frame_copy = None
-
-
-def get_next_frame_index(images_dir: str = "dataset/images", labels_dir: str = "dataset/labels") -> int:
-    """Return next safe frame index based on max numeric suffix in image/label files."""
-    pattern = re.compile(r"^frame_(\d+)\.(jpg|jpeg|png|txt)$", re.IGNORECASE)
-    max_idx = -1
-
-    for folder in (images_dir, labels_dir):
-        if not os.path.isdir(folder):
-            continue
-        for name in os.listdir(folder):
-            m = pattern.match(name)
-            if m:
-                max_idx = max(max_idx, int(m.group(1)))
-
-    return max_idx + 1
 
 
 def draw_rectangle(event, x, y, flags, param):
@@ -87,7 +69,8 @@ def label_mode(video_path: str, frame_interval_seconds: float):
     fps = cap.get(cv2.CAP_PROP_FPS) or 30
     frame_skip = max(1, int(fps * frame_interval_seconds))
 
-    frame_index = get_next_frame_index("dataset/images", "dataset/labels")
+    existing_images = [p for p in os.listdir("dataset/images") if p.lower().endswith(".jpg")]
+    frame_index = len(existing_images)
 
     print("[INFO] Label Mode Started")
     print("Mouse drag to draw box")
@@ -190,30 +173,7 @@ def resolve_model_path(model_arg: str) -> str:
     return model_arg
 
 
-def resolve_train_device(device_arg: str) -> str:
-    """Resolve training device with Intel-Mac-safe defaults."""
-    import torch
-
-    is_mac = platform.system() == "Darwin"
-    is_intel_mac = is_mac and platform.machine() == "x86_64"
-
-    if device_arg == "auto":
-        if torch.cuda.is_available():
-            return "0"
-        if torch.backends.mps.is_available() and not is_intel_mac:
-            return "mps"
-        return "cpu"
-
-    if device_arg == "mps" and is_intel_mac:
-        raise RuntimeError(
-            "MPS is only supported on Apple Silicon Macs. "
-            "Detected Intel Mac; use --device cpu."
-        )
-
-    return device_arg
-
-
-def train_mode(resume: bool, epochs: int, imgsz: int, batch: int, device: str):
+def train_mode(resume: bool, epochs: int, imgsz: int, batch: int):
     """Train model from base checkpoint or resume from latest best model."""
     if resume:
         resume_model = find_latest_best_model()
@@ -223,16 +183,12 @@ def train_mode(resume: bool, epochs: int, imgsz: int, batch: int, device: str):
         print("[INFO] Starting NEW training from YOLO base model (yolov8n.pt)...")
         model = YOLO("yolov8n.pt")
 
-    resolved_device = resolve_train_device(device)
-    print(f"[INFO] Training device: {resolved_device}")
-
     model.train(
         data="dataset.yaml",
         epochs=epochs,
         imgsz=imgsz,
         batch=batch,
         project="runs/detect",
-        device=resolved_device,
     )
 
 
@@ -434,7 +390,6 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--imgsz", type=int, default=640)
     parser.add_argument("--batch", type=int, default=8)
-    parser.add_argument("--device", default="auto", help="Training device: auto, cpu, mps, 0, 0,1...")
 
     # label args
     parser.add_argument("--frame-interval", type=float, default=FRAME_INTERVAL_SECONDS)
@@ -443,7 +398,7 @@ if __name__ == "__main__":
 
 
     if args.mode == "train":
-        train_mode(resume=args.resume, epochs=args.epochs, imgsz=args.imgsz, batch=args.batch, device=args.device)
+        train_mode(resume=args.resume, epochs=args.epochs, imgsz=args.imgsz, batch=args.batch)
     elif args.mode == "test":
         model_path = resolve_model_path(args.model)
         detect_and_count_video(args.video, model_path, args.conf, args.axis)

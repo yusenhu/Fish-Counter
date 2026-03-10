@@ -1,71 +1,54 @@
 # Fish Counter System
 
-Automated, non-invasive fish counting for UC Davis conservation operations.
+## Overview
+This project develops a non-invasive system to count endangered fish as they are transferred through a 4-inch hose using a fish-friendly pump at UC Davis.
 
-## Problem Statement
+## Motivation
+Manual counting causes stress to fish and is not scalable. This system provides an automated, real-time solution using optical sensing and computer vision.
 
-UC Davis teams may transfer thousands to tens of thousands of sensitive fish in a short period. Manual hand counting is labor-intensive and may increase handling stress. This project provides a computer-vision workflow to detect, track, and count fish during transfer.
+## Main Script
+- `fish_counter.py` includes four modes:
+  - `label`: label video frames and save YOLO-format annotations.
+  - `train`: train YOLO model on your dataset.
+  - `test`: run detection + tracking + directional counting on a video.
+  - `live`: run detection + tracking + directional counting on a live camera.
 
-## Objective
-
-Build a practical counting workflow for fish moving through a 4-inch transfer hose that is:
-
-- Accurate at operational flow speeds
-- Robust to bubbles/debris and semi-turbid water
-- Fast enough for high-throughput transfer events
-- Usable in wet, field-like environments
-
-## Sponsor & Contact
-
-- Dennis Cocherell / Florian Mauduit
-  Wildlife, Fish, and Conservation Biology Dept., UC Davis
-- decocherell@ucdavis.edu / fmauduit@ucdavis.edu
+## Key Improvements in Current Version
+- **Auto model selection**: `--model auto` selects the newest `runs/detect/train*/weights/best.pt`.
+- **Directional counting with reduced repeats**:
+  - Counts when a tracked fish crosses the center line.
+  - Supports `--axis auto` to infer dominant movement direction automatically.
+  - Also supports fixed `--axis horizontal` or `--axis vertical`.
 
 ---
 
-## Quick Start
+## macOS Terminal Setup
 
-### 1) Get files
-Clone or download this repository. Required files:
-
-- `fish_counter.py`
-- `requirements.txt`
-- `dataset.yaml`
-- `dataset/images` and `dataset/labels`
-
-### 2) Install dependencies (macOS / Linux)
-
+### 1) Create and activate a virtual environment
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
+```
+
+### 2) Install dependencies
+```bash
 pip install -r requirements.txt
 ```
 
-### 3) Install dependencies (Windows PowerShell)
-
-```powershell
-py -3 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-```
-
-If execution policy blocks activation:
-
-```powershell
-Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
-```
-
-### 4) Optional verification
+Or install directly:
 
 ```bash
-python -c "import numpy, cv2, ultralytics; print('numpy', numpy.__version__)"
+pip install "numpy<2" ultralytics opencv-python
 ```
+
+> If OpenCV window display has issues on macOS, make sure you run from a normal terminal session (not a headless environment).
 
 ---
 
 ## Dataset Layout
+
+Expected YOLO dataset structure:
 
 ```text
 dataset/
@@ -84,39 +67,53 @@ names:
   0: fish
 ```
 
-When your dataset structure changes (new folders/classes), update `dataset.yaml` accordingly.
+(For production, use a proper train/val split rather than using the same folder for both.)
 
 ---
 
-## Commands
+## Usage
 
-### Label
+### Label mode
+Extract frames from a video at intervals and annotate fish with mouse drag.
 
 ```bash
 python fish_counter.py --mode label --video test_fish_video.mp4 --frame-interval 0.5
 ```
 
-Controls: `s` save, `n` skip, `r` reset, `q` quit.
+Controls in label window:
+- `s`: save image + labels
+- `n`: skip frame
+- `r`: reset boxes
+- `q`: quit
 
-### Train (fresh)
+### Train mode
+Start a new training run from `yolov8n.pt`:
 
 ```bash
-python fish_counter.py --mode train --epochs 50 --imgsz 640 --batch 8 --device auto
+python fish_counter.py --mode train --epochs 50 --imgsz 640 --batch 8
 ```
 
-### Train (continue latest checkpoint)
+Resume from latest trained `best.pt`:
 
 ```bash
-python fish_counter.py --mode train --resume --device auto
+python fish_counter.py --mode train --resume
 ```
 
-### Test (video)
+### Test mode (video)
+Auto-select latest model and auto-detect movement axis:
 
 ```bash
 python fish_counter.py --mode test --video test_fish_video.mp4 --model auto --axis auto
 ```
 
-### Live camera
+Use a specific model path:
+
+```bash
+python fish_counter.py --mode test --video test_fish_video.mp4 --model runs/detect/train7/weights/best.pt --axis horizontal
+```
+
+### Live mode (camera)
+Use default camera index 0:
 
 ```bash
 python fish_counter.py --mode live --camera 0 --model auto --axis auto
@@ -124,38 +121,40 @@ python fish_counter.py --mode live --camera 0 --model auto --axis auto
 
 ---
 
-## Model Selection Behavior
+## Recommended Test Video for Reliable Counting
+For best results, use videos where fish:
+1. Enter from one side of the frame,
+2. Move clearly across the frame,
+3. Exit the frame on the opposite side.
 
-- `--model auto` in **test/live** selects the newest `runs/detect/train*/weights/best.pt`.
-- `--resume` in **train** starts from the latest trained checkpoint.
-- Without `--resume`, training starts from `yolov8n.pt`.
-
-Recommended multi-training cycle:
-1. Add labels/images
-2. Verify `dataset.yaml`
-3. Train with `--resume`
-4. Test/live with `--model auto`
+This matches the line-crossing logic and reduces ambiguous counts.
 
 ---
 
-## Device Notes
+## Notes on Accuracy / Duplicate Counts
+- Counting is tied to tracker IDs and line crossing.
+- Very crowded scenes, severe occlusion, or abrupt motion can still cause ID switches.
+- Improve robustness by:
+  - Better lighting and contrast,
+  - Stable camera placement,
+  - Tuning confidence threshold (`--conf`),
+  - Using videos with consistent fish flow direction.
 
-- Intel Mac: use `--device cpu`
-- Apple Silicon Mac: can use `--device mps`
-- Windows/Linux with NVIDIA GPU: use `--device 0`
 
 ---
 
 ## Troubleshooting
 
-### NumPy ABI error
-If you see:
+### NumPy ABI error (NumPy 2.x vs modules built for 1.x)
+If you see an error like:
 
-```text
+```
 A module that was compiled using NumPy 1.x cannot be run in NumPy 2.x
 ```
 
-Run:
+it means one or more native modules in your env are not yet compatible with NumPy 2.x.
+
+Run these commands in your **same activated venv**:
 
 ```bash
 python -m pip install --upgrade pip setuptools wheel
@@ -163,12 +162,18 @@ python -m pip install --upgrade --force-reinstall "numpy<2"
 python -m pip install --upgrade --force-reinstall ultralytics opencv-python
 ```
 
-### Camera not opening
+Then verify:
 
-- Try `--camera 1` or `--camera 2`
-- Confirm camera permissions for Terminal/VS Code
-- Use a webcam/capture device recognized by OS as a standard video device
+```bash
+python -c "import numpy, cv2; import ultralytics; print('numpy', numpy.__version__)"
+```
 
----
+If you are on macOS and still see issues, recreate a clean environment:
 
-For development/design history and implementation rationale, see `MODEL_NOTES.md`.
+```bash
+rm -rf .venv
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip setuptools wheel
+pip install "numpy<2" ultralytics opencv-python
+```
