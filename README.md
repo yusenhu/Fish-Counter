@@ -142,7 +142,13 @@ python fish_counter.py --mode train --resume --device auto
 ### Test (video)
 
 ```bash
-python fish_counter.py --mode test --video test_fish_video.mp4 --model auto --axis auto
+python fish_counter.py --mode test --video test_fish_video.mp4 --model auto --axis auto --line-pos 0.5
+```
+
+Optional zone-based crossing (instead of single line):
+
+```bash
+python fish_counter.py --mode test --video test_fish_video.mp4 --model auto --axis horizontal --zone-min 0.4 --zone-max 0.6
 ```
 
 ### Live camera
@@ -152,6 +158,21 @@ python fish_counter.py --mode live --camera 0 --model auto --axis auto
 ```
 
 ---
+
+### Tracker tuning (ByteTrack)
+
+Expose key tracker thresholds from CLI:
+
+```bash
+python fish_counter.py --mode test --video test_fish_video.mp4 --track-high-thresh 0.55 --track-low-thresh 0.1 --new-track-thresh 0.6 --track-buffer 30
+```
+
+### Training metadata
+
+Every training run writes `run_metadata.json` inside the training output folder, including:
+- Git commit hash
+- Dataset YAML fingerprint
+- Reported training metrics
 
 ## Model Selection Behavior
 

@@ -46,8 +46,8 @@ After new labels are added:
 - Re-run training and test with latest model
 
 ### Suggested future improvements
-- Add explicit run metadata logging (dataset version, commit hash, metrics)
-- Add evaluation script to compare newly trained model vs previous best
-- Add line/zone configuration from CLI instead of fixed center line
-- Add tracker config exposure (`bytetrack` thresholds/buffer) through CLI
-- Add CI checks and lightweight unit tests for path/model-index helpers
+- ✅ Added explicit run metadata logging (`run_metadata.json`: dataset fingerprint, commit hash, metrics)
+- (Removed) Standalone evaluation script was removed to keep project single-file.
+- ✅ Added line/zone configuration from CLI (`--line-pos`, `--zone-min`, `--zone-max`)
+- ✅ Added tracker config exposure for ByteTrack thresholds/buffer through CLI
+- (Removed) Extra helper/test/CI files were removed to keep project single-file.
