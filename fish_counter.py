@@ -1,5 +1,8 @@
-import argparse
 import os
+# Set FFmpeg environment variable BEFORE any imports (for 1-2 GB videos)
+os.environ["OPENCV_FFMPEG_READ_ATTEMPTS"] = "65536"
+
+import argparse
 import platform
 import re
 from collections import defaultdict, deque
@@ -7,12 +10,6 @@ from pathlib import Path
 from typing import Dict, Tuple
 
 import numpy as np
-
-if int(np.__version__.split(".")[0]) >= 2:
-    raise RuntimeError(
-        "Detected NumPy >= 2, but this environment has native modules built against NumPy 1.x. "
-        "Please install a compatible version: `python -m pip install 'numpy<2' --upgrade --force-reinstall`."
-    )
 
 import cv2
 from ultralytics import YOLO
@@ -60,17 +57,19 @@ def draw_rectangle(event, x, y, flags, param):
         ix, iy = x, y
 
     elif event == cv2.EVENT_MOUSEMOVE and drawing:
-        temp = frame_copy.copy()
-        cv2.rectangle(temp, (ix, iy), (x, y), (0, 255, 0), 2)
-        cv2.imshow("Label Mode", temp)
+        if frame_copy is not None:
+            temp = frame_copy.copy()
+            cv2.rectangle(temp, (ix, iy), (x, y), (0, 255, 0), 2)  # type: ignore
+            cv2.imshow("Label Mode", temp)  # type: ignore
 
     elif event == cv2.EVENT_LBUTTONUP:
         drawing = False
-        x1, y1 = min(ix, x), min(iy, y)
-        x2, y2 = max(ix, x), max(iy, y)
-        current_boxes.append((x1, y1, x2, y2))
-        cv2.rectangle(frame_copy, (x1, y1), (x2, y2), (0, 255, 0), 2)
-        cv2.imshow("Label Mode", frame_copy)
+        if frame_copy is not None:
+            x1, y1 = min(ix, x), min(iy, y)
+            x2, y2 = max(ix, x), max(iy, y)
+            current_boxes.append((x1, y1, x2, y2))
+            cv2.rectangle(frame_copy, (x1, y1), (x2, y2), (0, 255, 0), 2)  # type: ignore
+            cv2.imshow("Label Mode", frame_copy)  # type: ignore
 
 
 def label_mode(video_path: str, frame_interval_seconds: float):
@@ -115,7 +114,7 @@ def label_mode(video_path: str, frame_interval_seconds: float):
         cv2.setMouseCallback("Label Mode", draw_rectangle)
 
         while True:
-            cv2.imshow("Label Mode", frame_copy)
+            cv2.imshow("Label Mode", frame_copy)  # type: ignore
             key = cv2.waitKey(1) & 0xFF
 
             if key == ord("s"):
@@ -159,28 +158,34 @@ def label_mode(video_path: str, frame_interval_seconds: float):
 
 
 def find_latest_best_model(default_path: str = "runs/detect/train/weights/best.pt") -> str:
-    """Return newest available best.pt across train folders; fallback to default path."""
+    """Return newest available best.pt across train folders; fallback to YOLO base model."""
     runs_dir = Path("runs/detect")
-    if not runs_dir.exists():
-        return default_path
+    if runs_dir.exists():
+        candidates = []
+        for train_dir in runs_dir.glob("train*"):
+            best = train_dir / "weights" / "best.pt"
+            if best.exists():
+                candidates.append(best)
 
-    candidates = []
-    for train_dir in runs_dir.glob("train*"):
-        best = train_dir / "weights" / "best.pt"
-        if best.exists():
-            candidates.append(best)
+        if candidates:
+            latest = max(candidates, key=lambda p: p.stat().st_mtime)
+            return str(latest)
 
-    if not candidates:
-        return default_path
-
-    latest = max(candidates, key=lambda p: p.stat().st_mtime)
-    return str(latest)
+    # If no trained model exists, fall back to the base YOLO model from ultralytics
+    self_warn = """[WARNING] No local trained best model found at runs/detect/train*/weights/best.pt. "
+                 "Falling back to 'yolov8n.pt'. Please run training first to generate a local checkpoint."""
+    print(self_warn)
+    return "yolov8n.pt"
 
 
 def resolve_model_path(model_arg: str) -> str:
     """Resolve model path from CLI arg (`auto` supported)."""
     if model_arg == "auto":
         path = find_latest_best_model()
+        if not Path(path).exists() and path != "yolov8n.pt":
+            raise FileNotFoundError(
+                f"Auto-selected model path does not exist: {path}. "
+                "Run training mode first or specify --model <path>.")
         print(f"[INFO] Auto-selected model: {path}")
         return path
 
@@ -191,18 +196,22 @@ def resolve_model_path(model_arg: str) -> str:
 
 
 def resolve_train_device(device_arg: str) -> str:
-    """Resolve training device with Intel-Mac-safe defaults."""
+    """Resolve training device with GPU priority."""
     import torch
 
     is_mac = platform.system() == "Darwin"
     is_intel_mac = is_mac and platform.machine() == "x86_64"
 
     if device_arg == "auto":
+        # Prioritize GPU when available
         if torch.cuda.is_available():
-            return "0"
+            gpu_count = torch.cuda.device_count()
+            if gpu_count > 1:
+                return "0,1"  # Use multiple GPUs if available
+            return "0"  # Use first GPU
         if torch.backends.mps.is_available() and not is_intel_mac:
-            return "mps"
-        return "cpu"
+            return "mps"  # Apple Silicon GPU
+        return "cpu"  # Fallback to CPU
 
     if device_arg == "mps" and is_intel_mac:
         raise RuntimeError(
@@ -213,8 +222,49 @@ def resolve_train_device(device_arg: str) -> str:
     return device_arg
 
 
+def create_dataset_yaml():
+    """Create dataset.yaml if it doesn't exist."""
+    import yaml
+
+    dataset_yaml_path = "dataset.yaml"
+
+    if Path(dataset_yaml_path).exists():
+        print(f"[INFO] Dataset config already exists: {dataset_yaml_path}")
+        return
+
+    # Check if dataset directories exist
+    images_dir = Path("dataset/images")
+    labels_dir = Path("dataset/labels")
+
+    if not images_dir.exists():
+        images_dir.mkdir(parents=True, exist_ok=True)
+        print(f"[INFO] Created images directory: {images_dir}")
+
+    if not labels_dir.exists():
+        labels_dir.mkdir(parents=True, exist_ok=True)
+        print(f"[INFO] Created labels directory: {labels_dir}")
+
+    # Create dataset.yaml
+    dataset_config = {
+        "path": "dataset",
+        "train": "images",
+        "val": "images",  # Use same images for both train and val for small datasets
+        "names": {
+            0: "fish"
+        }
+    }
+
+    with open(dataset_yaml_path, "w", encoding="utf-8") as f:
+        yaml.dump(dataset_config, f, default_flow_style=False, sort_keys=False)
+
+    print(f"[INFO] Created dataset config: {dataset_yaml_path}")
+
+
 def train_mode(resume: bool, epochs: int, imgsz: int, batch: int, device: str):
     """Train model from base checkpoint or resume from latest best model."""
+    # Ensure dataset.yaml exists
+    create_dataset_yaml()
+
     if resume:
         resume_model = find_latest_best_model()
         print(f"[INFO] Continuing training from: {resume_model}")
@@ -356,8 +406,27 @@ class DirectionalCounter:
         )
 
 
-def run_detection_stream(capture: cv2.VideoCapture, model_path: str, conf: float, axis_mode: str, window_name: str):
+def run_detection_stream(capture: cv2.VideoCapture, model_path: str, conf: float, axis_mode: str, window_name: str, device: str = "auto"):
     model = YOLO(model_path)
+
+    # Force GPU usage when available and requested
+    if device not in {"cpu", "none"}:
+        import torch
+        if device == "auto":
+            if torch.cuda.is_available():
+                device = "0"
+            elif torch.backends.mps.is_available() and platform.system() == "Darwin":
+                device = "mps"
+            else:
+                device = "cpu"
+
+        try:
+            model = model.to(device)
+            print(f"[INFO] Running detection on device: {device}")
+        except Exception as e:
+            print(f"[WARNING] Cannot move model to {device}: {e} (fallback to cpu)")
+            model = model.to("cpu")
+
     counter = DirectionalCounter(axis_mode=axis_mode)
 
     while True:
@@ -367,30 +436,43 @@ def run_detection_stream(capture: cv2.VideoCapture, model_path: str, conf: float
 
         results = model.track(frame, persist=True, conf=conf, tracker="bytetrack.yaml")
 
-        if results and results[0].boxes.id is not None:
-            boxes = results[0].boxes.xyxy.cpu().tolist()
-            ids = [int(v) for v in results[0].boxes.id.cpu().tolist()]
+        if results and len(results) > 0:
+            detection_result = results[0]
+            if detection_result.boxes is not None and detection_result.boxes.id is not None:
+                boxes = detection_result.boxes.xyxy
+                box_ids = detection_result.boxes.id
 
-            for box, track_id in zip(boxes, ids):
-                x1, y1, x2, y2 = map(int, box)
-                cx = (x1 + x2) / 2.0
-                cy = (y1 + y2) / 2.0
+                # Convert tensors to list, handling both torch tensors and numpy arrays
+                if hasattr(boxes, 'cpu'):  # torch tensor
+                    boxes_list = boxes.cpu().tolist()  # type: ignore
+                else:  # numpy array
+                    boxes_list = boxes.tolist()
 
-                counter.update(track_id, (cx, cy), frame.shape)
+                if hasattr(box_ids, 'cpu'):  # torch tensor
+                    ids_list = [int(v) for v in box_ids.cpu().tolist()]  # type: ignore
+                else:  # numpy array
+                    ids_list = [int(v) for v in box_ids.tolist()]
 
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                cv2.putText(
-                    frame,
-                    f"ID {track_id}",
-                    (x1, max(15, y1 - 5)),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.6,
-                    (0, 255, 0),
-                    2,
-                )
+                for box, track_id in zip(boxes_list, ids_list):
+                    x1, y1, x2, y2 = map(int, box)
+                    cx = (x1 + x2) / 2.0
+                    cy = (y1 + y2) / 2.0
+
+                    counter.update(track_id, (cx, cy), frame.shape)
+
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)  # type: ignore
+                    cv2.putText(
+                        frame,
+                        f"ID {track_id}",
+                        (x1, max(15, y1 - 5)),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        (0, 255, 0),
+                        2,
+                    )
 
         counter.draw_overlay(frame)
-        cv2.imshow(window_name, frame)
+        cv2.imshow(window_name, frame)  # type: ignore
 
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
@@ -399,18 +481,18 @@ def run_detection_stream(capture: cv2.VideoCapture, model_path: str, conf: float
     cv2.destroyAllWindows()
 
 
-def detect_and_count_video(video_path: str, model_path: str, conf: float, axis_mode: str):
+def detect_and_count_video(video_path: str, model_path: str, conf: float, axis_mode: str, device: str):
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise RuntimeError(f"Unable to open video: {video_path}")
-    run_detection_stream(cap, model_path, conf, axis_mode, "Video Fish Detection")
+    run_detection_stream(cap, model_path, conf, axis_mode, "Video Fish Detection", device)
 
 
-def live_camera_mode(camera_index: int, model_path: str, conf: float, axis_mode: str):
+def live_camera_mode(camera_index: int, model_path: str, conf: float, axis_mode: str, device: str):
     cap = cv2.VideoCapture(camera_index)
     if not cap.isOpened():
         raise RuntimeError(f"Unable to open camera index: {camera_index}")
-    run_detection_stream(cap, model_path, conf, axis_mode, "Live Fish Detection")
+    run_detection_stream(cap, model_path, conf, axis_mode, "Live Fish Detection", device)
 
 
 if __name__ == "__main__":
@@ -444,11 +526,13 @@ if __name__ == "__main__":
 
     if args.mode == "train":
         train_mode(resume=args.resume, epochs=args.epochs, imgsz=args.imgsz, batch=args.batch, device=args.device)
-    elif args.mode == "test":
+    elif args.mode in {"test", "live"}:
         model_path = resolve_model_path(args.model)
-        detect_and_count_video(args.video, model_path, args.conf, args.axis)
-    elif args.mode == "live":
-        model_path = resolve_model_path(args.model)
-        live_camera_mode(args.camera, model_path, args.conf, args.axis)
+        resolved_device = resolve_train_device(args.device)
+
+        if args.mode == "test":
+            detect_and_count_video(args.video, model_path, args.conf, args.axis, resolved_device)
+        else:
+            live_camera_mode(args.camera, model_path, args.conf, args.axis, resolved_device)
     elif args.mode == "label":
         label_mode(args.video, args.frame_interval)
