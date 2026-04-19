@@ -28,10 +28,15 @@ Build a practical counting workflow for fish moving through a 4-inch transfer ho
 ### 1) Get files
 Clone or download this repository. Required files:
 
-- `fish_counter.py`
+- `fish_counter.py` (inference and labeling)
+- `convert_dataset.py` (dataset conversion utilities)
+- `convert_fish_dataset.py` (auto-detect dataset converter)
+- `merge_datasets.py` (merge multiple YOLO datasets)
+- `train.py` (training script with pretrain/finetune modes)
 - `requirements.txt`
-- `dataset.yaml`
-- `dataset/images` and `dataset/labels`
+- `dataset.yaml` (for your top-view data)
+- `dataset_pretrain.yaml` (for online pretraining data)
+- `dataset/images` and `dataset/labels` (your labeled data)
 
 ### 2) Install dependencies
 
@@ -94,32 +99,101 @@ python -c "import numpy, cv2, ultralytics; print('numpy', numpy.__version__)"
 
 ---
 
+## Dataset Preparation
+
+Before training, convert your datasets to YOLO format.
+
+### Auto-detect converter
+
+```bash
+python convert_fish_dataset.py --input path/to/your/dataset --output datasets/processed/your_dataset
+```
+
+Supports: CSV/JSON annotations, CVAT XML, cropped images, Kaggle segmentation masks.
+
+### Manual converters
+
+#### CSV/JSON to YOLO
+```bash
+python convert_dataset.py csv path/to/annotations.csv path/to/images datasets/processed/output
+```
+
+#### CVAT XML to YOLO
+```bash
+python convert_dataset.py xml path/to/annotations.xml path/to/images datasets/processed/output
+```
+
+#### Cropped images to YOLO
+```bash
+python convert_dataset.py cropped path/to/cropped_images datasets/processed/output
+```
+
+### Merge datasets
+
+```bash
+python merge_datasets.py datasets/processed/dataset1 datasets/processed/dataset2 --output datasets/processed/merged
+```
+
+Creates `fish_dataset_all_processed.yaml` for training.
+
+---
+
 ## Dataset Layout
 
 ```text
-dataset/
+datasets/processed/your_dataset/
   images/
+    train/
+    val/
   labels/
+    train/
+    val/
 dataset.yaml
 ```
 
 Example `dataset.yaml`:
 
 ```yaml
-path: dataset
-train: images
-val: images
+path: datasets/processed/your_dataset
+train: images/train
+val: images/val
 names:
   0: fish
 ```
 
-When your dataset structure changes (new folders/classes), update `dataset.yaml` accordingly.
+When your dataset structure changes, update the YAML accordingly.
 
 ---
 
-## Commands
+## Training
 
-### Label
+Train YOLOv8 models with pretraining on online fish data and finetuning on your top-view data.
+
+### Pretrain only (online data)
+
+```bash
+python train.py --mode pretrain --pretrain dataset_pretrain.yaml --pretrain-epochs 50
+```
+
+### Finetune only (your data)
+
+```bash
+python train.py --mode finetune --finetune dataset.yaml --checkpoint runs/pretrain/online_fish/weights/best.pt
+```
+
+### Combined pretrain + finetune
+
+```bash
+python train.py --mode combined --pretrain dataset_pretrain.yaml --finetune dataset.yaml
+```
+
+Automatically reuses existing best checkpoints unless `--force-pretrain` is used.
+
+---
+
+## Inference Commands
+
+### Label (annotate frames)
 
 ```bash
 python fish_counter.py --mode label --video test_fish_video.mp4 --frame-interval 0.5
@@ -127,26 +201,17 @@ python fish_counter.py --mode label --video test_fish_video.mp4 --frame-interval
 
 Controls: `s` save, `n` skip, `r` reset, `q` quit.
 
-### Train (fresh)
-
-```bash
-python fish_counter.py --mode train --epochs 50 --imgsz 640 --batch 8 --device auto
-```
-
-### Train (continue latest checkpoint)
-
-```bash
-python fish_counter.py --mode train --resume --device auto
-```
-
 ### Test (video)
 
 ```bash
-python fish_counter.py --mode test --video test_fish_video.mp4 --model auto --axis auto
+python fish_counter.py --mode test --video test_fish_video.mp4 --model auto --axis auto --device auto
 ```
 
 ### Live camera
 
+```bash
+python fish_counter.py --mode live --camera 0 --model auto --axis auto --device auto
+```
 ```bash
 python fish_counter.py --mode live --camera 0 --model auto --axis auto
 ```
@@ -155,23 +220,26 @@ python fish_counter.py --mode live --camera 0 --model auto --axis auto
 
 ## Model Selection Behavior
 
-- `--model auto` in **test/live** selects the newest `runs/detect/train*/weights/best.pt`.
-- `--resume` in **train** starts from the latest trained checkpoint.
-- Without `--resume`, training starts from `yolov8n.pt`.
+- `--model auto` in **test/live** selects the newest `runs/detect/train*/weights/best.pt` from finetuning.
+- Training uses `yolov8n.pt` as base, with optional pretraining.
+- Pretraining saves to `runs/pretrain/online_fish*/weights/best.pt`.
+- Finetuning saves to `runs/detect/topview_finetuned*/weights/best.pt`.
 
-Recommended multi-training cycle:
-1. Add labels/images
-2. Verify `dataset.yaml`
-3. Train with `--resume`
+Recommended workflow:
+1. Convert and merge datasets
+2. Pretrain on online data
+3. Finetune on your top-view data
 4. Test/live with `--model auto`
 
 ---
 
 ## Device Notes
 
+- **Auto mode** prioritizes GPU: uses multiple GPUs if available (`0,1`), single GPU (`0`), Apple Silicon MPS, or CPU fallback
 - Intel Mac: use `--device cpu`
-- Apple Silicon Mac: can use `--device mps`
-- Windows/Linux with NVIDIA GPU: use `--device 0`
+- Apple Silicon Mac: can use `--device mps` or `auto`
+- Windows/Linux with NVIDIA GPU: use `--device 0` or `auto`
+- Multiple GPUs: `--device 0,1` or let `auto` detect
 
 ---
 
@@ -209,15 +277,28 @@ Run:
 
 ```bash
 python -m pip install --upgrade pip setuptools wheel
-python -m pip install --upgrade --force-reinstall "numpy<2"
 python -m pip install --upgrade --force-reinstall ultralytics opencv-python
 ```
 
-### Camera not opening
+### Training issues
+- If pretraining fails, check `dataset_pretrain.yaml` points to valid processed data
+- Use `--force-pretrain` to retrain even if best checkpoint exists
+- For custom checkpoints, use `--checkpoint path/to/best.pt` in finetune mode
 
-- Try `--camera 1` or `--camera 2`
-- Confirm camera permissions for Terminal/VS Code
-- Use a webcam/capture device recognized by OS as a standard video device
+### FFmpeg read attempts warning
+
+If you see:
+
+```text
+[ WARN:...] grabFrame packet read max attempts exceeded... OPENCV_FFMPEG_READ_ATTEMPTS (current value is 4096)
+```
+
+For large videos (1-2 GB+), the code automatically sets this to 65536. If you still get warnings, try:
+
+```powershell
+$env:OPENCV_FFMPEG_READ_ATTEMPTS = "131072"
+python fish_counter.py --mode label --video your_video.mp4
+```
 
 ---
 
