@@ -147,3 +147,19 @@ After new labels are added:
 - Add video preprocessing option for problematic FFmpeg streams
 - Add automatic environment variable detection based on video file size
 - Add cross-platform video format validation before processing
+
+### 12) Repository Reorganization for Core vs EXE Packaging (2026)
+**Issue**: Core development scripts and EXE-packaging assets were mixed at repo root, making onboarding and distribution paths less clear.
+
+**Changes Applied**:
+- Moved core CV/training scripts into `fish_counter_core/`:
+  - `fish_counter.py`
+  - `train.py`
+  - dataset conversion/merge utilities
+- Moved Windows EXE packaging assets into `exe_package/`:
+  - `fish_counter_exe_launcher.py`
+  - `build_windows_exe.ps1`
+  - `training_data/README.txt`
+- Updated README commands and packaging instructions to use new paths.
+
+**Impact**: Clear separation between research/development workflow and end-user EXE packaging workflow.

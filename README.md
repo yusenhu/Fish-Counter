@@ -28,11 +28,11 @@ Build a practical counting workflow for fish moving through a 4-inch transfer ho
 ### 1) Get files
 Clone or download this repository. Required files:
 
-- `fish_counter.py` (inference and labeling)
-- `convert_dataset.py` (dataset conversion utilities)
-- `convert_fish_dataset.py` (auto-detect dataset converter)
-- `merge_datasets.py` (merge multiple YOLO datasets)
-- `train.py` (training script with pretrain/finetune modes)
+- `fish_counter_core/fish_counter.py` (inference and labeling)
+- `fish_counter_core/convert_dataset.py` (dataset conversion utilities)
+- `fish_counter_core/convert_fish_dataset.py` (auto-detect dataset converter)
+- `fish_counter_core/merge_datasets.py` (merge multiple YOLO datasets)
+- `fish_counter_core/train.py` (training script with pretrain/finetune modes)
 - `requirements.txt`
 - `dataset.yaml` (for your top-view data)
 - `dataset_pretrain.yaml` (for online pretraining data)
@@ -106,7 +106,7 @@ Before training, convert your datasets to YOLO format.
 ### Auto-detect converter
 
 ```bash
-python convert_fish_dataset.py --input path/to/your/dataset --output datasets/processed/your_dataset
+python fish_counter_core/convert_fish_dataset.py --input path/to/your/dataset --output datasets/processed/your_dataset
 ```
 
 Supports: CSV/JSON annotations, CVAT XML, cropped images, Kaggle segmentation masks.
@@ -115,23 +115,23 @@ Supports: CSV/JSON annotations, CVAT XML, cropped images, Kaggle segmentation ma
 
 #### CSV/JSON to YOLO
 ```bash
-python convert_dataset.py csv path/to/annotations.csv path/to/images datasets/processed/output
+python fish_counter_core/convert_dataset.py csv path/to/annotations.csv path/to/images datasets/processed/output
 ```
 
 #### CVAT XML to YOLO
 ```bash
-python convert_dataset.py xml path/to/annotations.xml path/to/images datasets/processed/output
+python fish_counter_core/convert_dataset.py xml path/to/annotations.xml path/to/images datasets/processed/output
 ```
 
 #### Cropped images to YOLO
 ```bash
-python convert_dataset.py cropped path/to/cropped_images datasets/processed/output
+python fish_counter_core/convert_dataset.py cropped path/to/cropped_images datasets/processed/output
 ```
 
 ### Merge datasets
 
 ```bash
-python merge_datasets.py datasets/processed/dataset1 datasets/processed/dataset2 --output datasets/processed/merged
+python fish_counter_core/merge_datasets.py datasets/processed/dataset1 datasets/processed/dataset2 --output datasets/processed/merged
 ```
 
 Creates `fish_dataset_all_processed.yaml` for training.
@@ -172,19 +172,19 @@ Train YOLOv8 models with pretraining on online fish data and finetuning on your 
 ### Pretrain only (online data)
 
 ```bash
-python train.py --mode pretrain --pretrain dataset_pretrain.yaml --pretrain-epochs 50
+python fish_counter_core/train.py --mode pretrain --pretrain dataset_pretrain.yaml --pretrain-epochs 50
 ```
 
 ### Finetune only (your data)
 
 ```bash
-python train.py --mode finetune --finetune dataset.yaml --checkpoint runs/pretrain/online_fish/weights/best.pt
+python fish_counter_core/train.py --mode finetune --finetune dataset.yaml --checkpoint runs/pretrain/online_fish/weights/best.pt
 ```
 
 ### Combined pretrain + finetune
 
 ```bash
-python train.py --mode combined --pretrain dataset_pretrain.yaml --finetune dataset.yaml
+python fish_counter_core/train.py --mode combined --pretrain dataset_pretrain.yaml --finetune dataset.yaml
 ```
 
 Automatically reuses existing best checkpoints unless `--force-pretrain` is used.
@@ -196,7 +196,7 @@ Automatically reuses existing best checkpoints unless `--force-pretrain` is used
 ### Label (annotate frames)
 
 ```bash
-python fish_counter.py --mode label --video test_fish_video.mp4 --frame-interval 0.5
+python fish_counter_core/fish_counter.py --mode label --video test_fish_video.mp4 --frame-interval 0.5
 ```
 
 Controls: `s` save, `n` skip, `r` reset, `q` quit.
@@ -204,16 +204,16 @@ Controls: `s` save, `n` skip, `r` reset, `q` quit.
 ### Test (video)
 
 ```bash
-python fish_counter.py --mode test --video test_fish_video.mp4 --model auto --axis auto --device auto
+python fish_counter_core/fish_counter.py --mode test --video test_fish_video.mp4 --model auto --axis auto --device auto
 ```
 
 ### Live camera
 
 ```bash
-python fish_counter.py --mode live --camera 0 --model auto --axis auto --device auto
+python fish_counter_core/fish_counter.py --mode live --camera 0 --model auto --axis auto --device auto
 ```
 ```bash
-python fish_counter.py --mode live --camera 0 --model auto --axis auto
+python fish_counter_core/fish_counter.py --mode live --camera 0 --model auto --axis auto
 ```
 
 ---
@@ -297,9 +297,28 @@ For large videos (1-2 GB+), the code automatically sets this to 65536. If you st
 
 ```powershell
 $env:OPENCV_FFMPEG_READ_ATTEMPTS = "131072"
-python fish_counter.py --mode label --video your_video.mp4
+python fish_counter_core/fish_counter.py --mode label --video your_video.mp4
 ```
 
 ---
 
 For development/design history and implementation rationale, see `MODEL_NOTES.md`.
+
+## EXE Packaging (separate folder)
+
+All EXE-related files are organized under `exe_package/`:
+- `exe_package/fish_counter_exe_launcher.py`
+- `exe_package/build_windows_exe.ps1`
+- `exe_package/training_data/README.txt`
+
+Build on Windows PowerShell from repo root:
+
+```powershell
+cd exe_package
+.\build_windows_exe.ps1
+```
+
+After build, distribute:
+- `dist/FishCounter.exe`
+- `training_data/best.pt` (next to EXE package layout described in `exe_package/training_data/README.txt`)
+
