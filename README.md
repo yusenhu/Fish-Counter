@@ -38,8 +38,8 @@ The repo is now split into two top-level folders:
 Clone or download this repository. Required files:
 
 - `development/fish_counter.py` (inference and labeling)
-- `development/convert_dataset.py` (dataset conversion utilities)
-- `development/convert_fish_dataset.py` (auto-detect dataset converter)
+- `development/convert_annotation_dataset.py` (dataset conversion utilities)
+- `development/auto_convert_dataset.py` (auto-detect dataset converter)
 - `development/merge_datasets.py` (merge multiple YOLO datasets)
 - `development/train.py` (training script with pretrain/finetune modes)
 - `development/requirements.txt`
@@ -88,7 +88,7 @@ Before training, convert your datasets to YOLO format.
 ### Auto-detect converter
 
 ```bash
-python development/convert_fish_dataset.py --input path/to/your/dataset --output datasets/processed/your_dataset
+python development/auto_convert_dataset.py --input path/to/your/dataset --output datasets/processed/your_dataset
 ```
 
 Supports: CSV/JSON annotations, CVAT XML, cropped images, Kaggle segmentation masks.
@@ -97,17 +97,17 @@ Supports: CSV/JSON annotations, CVAT XML, cropped images, Kaggle segmentation ma
 
 #### CSV/JSON to YOLO
 ```bash
-python development/convert_dataset.py csv path/to/annotations.csv path/to/images datasets/processed/output
+python development/convert_annotation_dataset.py csv path/to/annotations.csv path/to/images datasets/processed/output
 ```
 
 #### CVAT XML to YOLO
 ```bash
-python development/convert_dataset.py xml path/to/annotations.xml path/to/images datasets/processed/output
+python development/convert_annotation_dataset.py xml path/to/annotations.xml path/to/images datasets/processed/output
 ```
 
 #### Cropped images to YOLO
 ```bash
-python development/convert_dataset.py cropped path/to/cropped_images datasets/processed/output
+python development/convert_annotation_dataset.py cropped path/to/cropped_images datasets/processed/output
 ```
 
 ### Merge datasets
