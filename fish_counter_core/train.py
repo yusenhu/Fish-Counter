@@ -1,4 +1,5 @@
 import os
+import sys
 import argparse
 import shutil
 from pathlib import Path
@@ -6,6 +7,17 @@ from typing import Optional
 from typing import Optional
 from ultralytics import YOLO
 import platform
+
+def resolve_device(device: Optional[str] = None) -> str:
+    """Resolve device requests so auto and invalid values fallback to the default GPU/CPU chooser."""
+    if device is None:
+        return get_device()
+
+    normalized = str(device).strip().lower()
+    if normalized in {"auto", "none", "null", ""}:
+        return get_device()
+
+    return device
 
 
 def get_device():
@@ -55,16 +67,15 @@ def pretrain(pretrain_yaml: str, epochs: int = 50, device: Optional[str] = None,
         epochs: Number of epochs for pretraining
         force: If True, retrain even if existing best checkpoint already exists
     """
-    if device is None:
-        device = get_device()
+    device = resolve_device(device)
 
-    existing_checkpoint = get_existing_pretrain_checkpoint()
-    if existing_checkpoint and not force:
-        print(f"[INFO] Existing pretrained checkpoint found: {existing_checkpoint}")
-        print("[INFO] Skipping pretraining and reusing the existing best checkpoint.")
-        return existing_checkpoint
-    if device is None:
-        device = get_device()
+    print(f"[INFO] Python executable: {sys.executable}")
+    try:
+        import torch
+        print(f"[INFO] torch.cuda.is_available(): {torch.cuda.is_available()}")
+        print(f"[INFO] torch.cuda.device_count(): {torch.cuda.device_count()}")
+    except Exception as exc:
+        print(f"[WARNING] torch CUDA status unavailable: {exc}")
 
     existing_checkpoint = get_existing_pretrain_checkpoint()
     if existing_checkpoint and not force:
@@ -108,10 +119,17 @@ def finetune(pretrain_weights: str, finetune_yaml: str, epochs: int = 25, device
         pretrain_weights: Path to pretrained weights (from pretrain step)
         finetune_yaml: Path to your dataset YAML (top-view data)
         epochs: Number of epochs for fine-tuning
-        device: Device ('0', 'mps', 'cpu', or None for auto)
+        device: Device ('0', 'mps', 'cpu', 'auto', or None for auto)
     """
-    if device is None:
-        device = get_device()
+    device = resolve_device(device)
+    
+    print(f"[INFO] Python executable: {sys.executable}")
+    try:
+        import torch
+        print(f"[INFO] torch.cuda.is_available(): {torch.cuda.is_available()}")
+        print(f"[INFO] torch.cuda.device_count(): {torch.cuda.device_count()}")
+    except Exception as exc:
+        print(f"[WARNING] torch CUDA status unavailable: {exc}")
     
     print(f"[INFO] Starting fine-tuning on top-view dataset...")
     print(f"[INFO] Loading pretrained weights: {pretrain_weights}")
@@ -147,9 +165,8 @@ def combined_training(pretrain_yaml: str, finetune_yaml: str,
     Usage:
         python train.py --mode combined --pretrain dataset_pretrain.yaml --finetune dataset.yaml
     """
-    if device is None:
-        device = get_device()
-    
+    device = resolve_device(device)
+
     print("=" * 60)
     print("TRANSFER LEARNING WORKFLOW: Pretrain → Fine-tune")
     print("=" * 60)
@@ -174,6 +191,7 @@ def combined_training(pretrain_yaml: str, finetune_yaml: str,
 
 
 if __name__ == "__main__":
+
     parser = argparse.ArgumentParser(description="Transfer learning: pretrain then fine-tune")
     parser.add_argument(
         "--mode",
@@ -206,7 +224,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--device",
         default=None,
-        help="Device: '0', 'mps', 'cpu', or None for auto"
+        help="Device: '0', 'mps', 'cpu', 'auto', or None for auto"
     )
     parser.add_argument(
         "--force-pretrain",
@@ -248,4 +266,3 @@ if __name__ == "__main__":
         print(f"  Final model saved to: {final_weights}")
         print(f"  Use with: --model {final_weights}")
         print("=" * 60)
-
