@@ -65,8 +65,8 @@ Because some dependencies may be built against NumPy 1.x, environment is pinned 
 **Issue**: Original code only supported manual dataset preparation and basic training. Scaling to multiple datasets required automation.
 
 **Features Added**:
-- `convert_dataset.py`: Multi-format converter (CSV, JSON, CVAT XML, cropped images)
-- `convert_fish_dataset.py`: Auto-detect dataset type and convert
+- `convert_annotation_dataset.py`: Multi-format converter (CSV, JSON, CVAT XML, cropped images)
+- `auto_convert_dataset.py`: Auto-detect dataset type and convert
 - `merge_datasets.py`: Combine multiple YOLO datasets
 - `train.py`: Separate training script with pretrain/finetune/combined modes
 - Checkpoint reuse logic to avoid retraining existing models
