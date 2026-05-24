@@ -3,6 +3,19 @@
 This file keeps technical rationale, change history, and deeper implementation notes.
 User-facing quick usage belongs in `README.md`.
 
+## Repository Organization Update (2026-05-24)
+
+Repository structure is standardized into two folders:
+- `development/`: development scripts and model training/inference code
+- `exe/`: Windows executable launcher and packaging script
+
+Migration details:
+- Moved `fish_counter.py`, training, conversion, merge scripts, and `requirements.txt` into `development/`
+- Moved EXE launcher and build script into `exe/`
+- Updated build script to set working directory to its script folder before running PyInstaller
+
+This separation keeps deployment artifacts and developer workflows independent, reducing accidental edits during field deployment prep.
+
 ## Evolution Summary
 
 ### 1) Initial issue: stale model path
@@ -147,3 +160,20 @@ After new labels are added:
 - Add video preprocessing option for problematic FFmpeg streams
 - Add automatic environment variable detection based on video file size
 - Add cross-platform video format validation before processing
+
+
+## EXE File Development History
+
+### A) Standalone launcher split from development CLI
+- Added dedicated `exe/fish_counter_exe_launcher.py` for one-click runtime behavior
+- Kept launcher intentionally isolated from `development/fish_counter.py`
+- Purpose: stable, minimal entrypoint for PyInstaller packaging
+
+### B) Windows packaging automation
+- Added `exe/build_windows_exe.ps1` to install packaging dependencies and build one-file EXE
+- Uses `pyinstaller --onefile --windowed --name FishCounter fish_counter_exe_launcher.py`
+
+### C) Build-path reliability update
+- Updated PowerShell build script to run from `$MyInvocation.MyCommand.Path` directory
+- Prevents packaging failures caused by running script from the wrong working directory
+- Ensures consistent output location at `exe/dist/FishCounter.exe`
