@@ -166,35 +166,64 @@ python development/fish_counter.py --mode live --camera 0 --model auto --axis au
 
 ---
 
-## EXE Workflow (Non-Developer Use)
+# Fish Counter EXE Instructions
 
-### Files you need
+## Non-Developer Use
 
-- `exe/fish_counter_exe_launcher.py`
-- `exe/build_windows_exe.ps1`
-- Trained model at `training_data/best.pt`
+### What you need
+- `dist\FishCounter.exe`
+- `dist\training_data\best.pt`
+
+### How to run
+1. Put your trained model at `dist\training_data\best.pt`.
+2. Double-click `dist\FishCounter.exe`.
+
+### If you want to run from PowerShell
+```powershell
+cd .\dist
+.\FishCounter.exe
+```
+
+### If the default model path is not used
+```powershell
+cd .\dist
+.\FishCounter.exe --model .\training_data\best.pt
+```
+
+### Runtime controls
+- Press `s` to start or resume counting
+- Press `p` to pause counting
+- Press `r` to reset counts to zero
+- Press `q` to quit
+
+## Developer Use
+
+### What you need
+- `fish_counter_exe_launcher.py`
+- `build_windows_exe.ps1`
+- `training_data\best.pt`
+- Python installed
 
 ### Build the EXE (Windows)
-
-From PowerShell:
-
+From PowerShell in the project root:
 ```powershell
-Set-Location .\exe
+cd C:\Users\HYS\Desktop\fish_exe
 .\build_windows_exe.ps1
 ```
 
-Output:
-
-- `exe/dist/FishCounter.exe`
-
-### Run the EXE
-
-Place `FishCounter.exe` where you can also provide a model file (default expected path `training_data/best.pt`) or launch with custom arguments.
-
-Equivalent launcher command (for testing without packaging):
-
+### Run without packaging
 ```powershell
-python .\exe\fish_counter_exe_launcher.py --model training_data/best.pt --camera -1 --device auto
+cd C:\Users\HYS\Desktop\fish_exe
+python .\fish_counter_exe_launcher.py --model training_data\best.pt --camera -1 --device auto
 ```
 
----
+### Optional camera scan range
+If your camera is not found, increase the scan range:
+```powershell
+python .\fish_counter_exe_launcher.py --model training_data\best.pt --camera -1 --max-camera-index 20 --device auto
+```
+
+### Notes
+- The EXE expects `training_data\best.pt` relative to the executable.
+- The launcher also supports selecting a camera interactively when multiple cameras are detected.
+- Use `--camera <index>` to force a specific camera if needed.
