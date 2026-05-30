@@ -165,15 +165,31 @@ After new labels are added:
 ## EXE File Development History
 
 ### A) Standalone launcher split from development CLI
-- Added dedicated `exe/fish_counter_exe_launcher.py` for one-click runtime behavior
-- Kept launcher intentionally isolated from `development/fish_counter.py`
-- Purpose: stable, minimal entrypoint for PyInstaller packaging
+- Added dedicated `fish_counter_exe_launcher.py` as a separate runtime entrypoint for the packaged EXE
+- Kept launcher intentionally isolated from the main development script `fish_counter.py`
+- Purpose: stable, minimal entrypoint for PyInstaller packaging and live camera runtime usage
 
-### B) Windows packaging automation
-- Added `exe/build_windows_exe.ps1` to install packaging dependencies and build one-file EXE
-- Uses `pyinstaller --onefile --windowed --name FishCounter fish_counter_exe_launcher.py`
+### B) Directional counting and live camera controls
+- Added directional crossing count logic into the launcher
+- Draws a center line and counts fish crossing it
+- Tracks directions: `L->R`, `R->L`, `T->B`, `B->T`
+- Added runtime key controls:
+  - `s` = start/resume counting
+  - `p` = pause counting
+  - `r` = reset counts
+  - `q` = quit
 
-### C) Build-path reliability update
-- Updated PowerShell build script to run from `$MyInvocation.MyCommand.Path` directory
-- Prevents packaging failures caused by running script from the wrong working directory
-- Ensures consistent output location at `exe/dist/FishCounter.exe`
+### C) Windows packaging automation
+- Added `build_windows_exe.ps1` to install packaging dependencies and build the EXE
+- Uses PyInstaller with:
+  - `pyinstaller --onefile --windowed --name FishCounter --distpath dist fish_counter_exe_launcher.py`
+- Builds output to `dist\FishCounter.exe`
+
+### D) Build/runtime path reliability
+- Updated launcher to resolve `training_data/best.pt` relative to the executable directory if the default path is missing
+- Allows the EXE to find the model when run from `dist\FishCounter.exe`
+- Updated the build script to create `dist\training_data` and recommend placing `best.pt` there
+
+### Notes
+- The EXE now supports live camera selection and explicit camera scanning
+- The runtime experience and packaging path handling are both improved
