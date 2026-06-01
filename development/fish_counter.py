@@ -1,6 +1,6 @@
 import os
 # Set FFmpeg environment variable BEFORE any imports (for 1-2 GB videos)
-os.environ["OPENCV_FFMPEG_READ_ATTEMPTS"] = "65536"
+os.environ["OPENCV_FFMPEG_READ_ATTEMPTS"] = "524288"
 
 import argparse
 import platform
@@ -19,7 +19,7 @@ from ultralytics import YOLO
 # ==============================
 
 VIDEO_PATH = "test_fish_video.mp4"
-CONF_THRESHOLD = 0.4
+CONF_THRESHOLD = 0.31
 CAMERA_INDEX = 0
 FRAME_INTERVAL_SECONDS = 0.5
 
@@ -205,13 +205,13 @@ def resolve_train_device(device_arg: str) -> str:
     if device_arg == "auto":
         # Prioritize GPU when available
         if torch.cuda.is_available():
-            gpu_count = torch.cuda.device_count()
-            if gpu_count > 1:
-                return "0,1"  # Use multiple GPUs if available
-            return "0"  # Use first GPU
+            return "cuda:0"
         if torch.backends.mps.is_available() and not is_intel_mac:
             return "mps"  # Apple Silicon GPU
         return "cpu"  # Fallback to CPU
+
+    if device_arg == "0":
+        return "cuda:0"
 
     if device_arg == "mps" and is_intel_mac:
         raise RuntimeError(
@@ -428,6 +428,8 @@ def run_detection_stream(capture: cv2.VideoCapture, model_path: str, conf: float
             model = model.to("cpu")
 
     counter = DirectionalCounter(axis_mode=axis_mode)
+    fps = capture.get(cv2.CAP_PROP_FPS) or 30
+    frame_delay_ms = max(1, int(1000 / fps))
 
     while True:
         ret, frame = capture.read()
@@ -474,7 +476,7 @@ def run_detection_stream(capture: cv2.VideoCapture, model_path: str, conf: float
         counter.draw_overlay(frame)
         cv2.imshow(window_name, frame)  # type: ignore
 
-        if cv2.waitKey(1) & 0xFF == ord("q"):
+        if cv2.waitKey(frame_delay_ms) & 0xFF == ord("q"):
             break
 
     capture.release()
