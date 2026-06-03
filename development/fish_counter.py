@@ -18,8 +18,8 @@ from ultralytics import YOLO
 # ===== DEFAULT PARAMETERS =====
 # ==============================
 
-VIDEO_PATH = "test_fish_video.mp4"
-CONF_THRESHOLD = 0.31
+VIDEO_PATH = "fish_test_video1.mov"
+CONF_THRESHOLD = 0.458
 CAMERA_INDEX = 0
 FRAME_INTERVAL_SECONDS = 0.5
 
@@ -288,12 +288,12 @@ def train_mode(resume: bool, epochs: int, imgsz: int, batch: int, device: str):
 
 class DirectionalCounter:
     """
-    Count fish once when crossing a center line.
-    Axis can be fixed or auto-selected based on track motion.
+    Count fish either by crossing a center line (horizontal/vertical/auto)
+    or by entering a central region (`region` mode).
     """
 
-    def __init__(self, axis_mode: str = "auto", min_track_points: int = 4):
-        self.axis_mode = axis_mode  # auto | horizontal | vertical
+    def __init__(self, axis_mode: str = "auto", min_track_points: int = 4, region_frac: float = 0.33):
+        self.axis_mode = axis_mode  # auto | horizontal | vertical | region
         self.min_track_points = min_track_points
         self.track_history: Dict[int, deque] = defaultdict(lambda: deque(maxlen=30))
         self.counted_ids = set()
@@ -303,8 +303,12 @@ class DirectionalCounter:
         self.top_to_bottom = 0
         self.bottom_to_top = 0
 
+        # Region parameters (pixels); computed on first update when needed
+        self.region = None  # (x1, y1, x2, y2)
+        self.region_frac = float(region_frac)
+
     def _choose_axis(self) -> str:
-        if self.axis_mode in {"horizontal", "vertical"}:
+        if self.axis_mode in {"horizontal", "vertical", "region"}:
             return self.axis_mode
 
         total_dx, total_dy = 0.0, 0.0
@@ -324,19 +328,59 @@ class DirectionalCounter:
 
         return "horizontal" if total_dx >= total_dy else "vertical"
 
+    def _ensure_region(self, frame_shape: Tuple[int, int, int]):
+        if self.region is not None:
+            return
+        h, w = frame_shape[:2]
+        # If in explicit 'region' mode, use full width and center one-third vertically
+        if self.axis_mode == "region":
+            rh = h // 3
+            x1 = 0
+            # place region center at 5/8 of frame height (i.e., 3/8 from bottom)
+            y_center = (5 * h) // 8
+            y1 = int(y_center - rh // 2)
+            if y1 < 0:
+                y1 = 0
+            y2 = y1 + rh
+            if y2 > h:
+                y2 = h
+                y1 = h - rh
+            x2 = w
+        else:
+            rw = int(w * self.region_frac)
+            rh = int(h * self.region_frac)
+            x1 = (w - rw) // 2
+            y1 = (h - rh) // 2
+            x2 = x1 + rw
+            y2 = y1 + rh
+        self.region = (x1, y1, x2, y2)
+
     def update(self, track_id: int, center: Tuple[float, float], frame_shape: Tuple[int, int, int]):
         self.track_history[track_id].append(center)
 
         history = self.track_history[track_id]
-        if len(history) < self.min_track_points:
-            return
 
         if track_id in self.counted_ids:
             return
 
         axis = self._choose_axis()
-        h, w = frame_shape[:2]
 
+        # Region-based counting: count immediately when the object's center first enters the region
+        if axis == "region":
+            self._ensure_region(frame_shape)
+            x1, y1, x2, y2 = self.region
+            cx, cy = center
+            if x1 <= cx <= x2 and y1 <= cy <= y2:
+                self.counted_ids.add(track_id)
+                self.total_count += 1
+            return
+
+        # For line-crossing modes require some track history to avoid noisy counts
+        if len(history) < self.min_track_points:
+            return
+
+        # Line crossing logic (unchanged)
+        h, w = frame_shape[:2]
         start_x, start_y = history[0]
         end_x, end_y = history[-1]
 
@@ -382,12 +426,26 @@ class DirectionalCounter:
                 (255, 255, 0),
                 2,
             )
-        else:
+        elif axis == "vertical":
             line_y = int(h / 2)
             cv2.line(frame, (0, line_y), (w, line_y), (255, 255, 0), 2)
             cv2.putText(
                 frame,
                 f"Axis: vertical | T->B: {self.top_to_bottom}  B->T: {self.bottom_to_top}",
+                (20, 80),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.65,
+                (255, 255, 0),
+                2,
+            )
+        else:  # region
+            # Ensure region exists for current frame
+            self._ensure_region((h, w, 3))
+            x1, y1, x2, y2 = self.region
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 255, 0), 2)
+            cv2.putText(
+                frame,
+                f"Region mode | Enter count: {self.total_count}",
                 (20, 80),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.65,
@@ -508,7 +566,7 @@ if __name__ == "__main__":
     parser.add_argument("--conf", type=float, default=CONF_THRESHOLD, help="Detection confidence threshold")
     parser.add_argument(
         "--axis",
-        choices=["auto", "horizontal", "vertical"],
+        choices=["auto", "horizontal", "vertical", "region"],
         default="auto",
         help="Counting axis: horizontal(left<->right), vertical(top<->bottom), or auto",
     )
