@@ -289,11 +289,12 @@ def train_mode(resume: bool, epochs: int, imgsz: int, batch: int, device: str):
 class DirectionalCounter:
     """
     Count fish either by crossing a center line (horizontal/vertical/auto)
-    or by entering a central region (`region` mode).
+    or by entering a central region. The CLI still selects region through
+    `--axis region`, but region is a counting mode rather than a physical axis.
     """
 
     def __init__(self, axis_mode: str = "auto", min_track_points: int = 4, region_frac: float = 0.33):
-        self.axis_mode = axis_mode  # auto | horizontal | vertical | region
+        self.axis_mode = axis_mode  # auto | horizontal | vertical | region-counting mode
         self.min_track_points = min_track_points
         self.track_history: Dict[int, deque] = defaultdict(lambda: deque(maxlen=30))
         self.counted_ids = set()
@@ -568,7 +569,7 @@ if __name__ == "__main__":
         "--axis",
         choices=["auto", "horizontal", "vertical", "region"],
         default="auto",
-        help="Counting axis: horizontal(left<->right), vertical(top<->bottom), or auto",
+        help="Counting selector: auto/horizontal/vertical line crossing, or region entry counting",
     )
 
     # train args
