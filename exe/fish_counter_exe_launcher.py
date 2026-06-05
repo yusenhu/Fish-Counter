@@ -109,7 +109,11 @@ def choose_camera_index(requested_index: int, max_index: int = 10) -> int:
 
 
 class DirectionalCounter:
-    """Count fish either by crossing a center line or entering a region."""
+    """Count fish by line crossing or by region entry.
+
+    The CLI still selects region through --axis region for compatibility,
+    but region is a counting mode rather than a physical axis.
+    """
 
     def __init__(self, axis_mode: str = "auto", min_track_points: int = 4, region_frac: float = 0.33):
         self.axis_mode = axis_mode
@@ -391,7 +395,7 @@ def main():
         "--axis",
         choices=["auto", "horizontal", "vertical", "region"],
         default="auto",
-        help="Counting axis for directional count",
+        help="Counting selector: auto/horizontal/vertical line crossing, or region entry counting",
     )
     args = parser.parse_args()
 
